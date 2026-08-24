@@ -1,5 +1,6 @@
 ﻿from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     APP_NAME: str = "Domain Intelligence API"
     APP_VERSION: str = "1.0.0"
@@ -12,6 +13,9 @@ class Settings(BaseSettings):
     MAX_RESPONSE_SIZE: int = 2_000_000
     MAX_PAGES_PER_SCAN: int = 3
     REQUEST_DELAY: float = 0.0
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
+    )
+
 
 settings = Settings()

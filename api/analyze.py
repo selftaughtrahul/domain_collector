@@ -123,7 +123,7 @@ import httpx
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Query
 
-from config import settings
+from utils.config import settings
 
 router = APIRouter()
 
