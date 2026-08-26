@@ -1,10 +1,36 @@
 import json
 import re
 from typing import Any
+
 import httpx
 from bs4 import BeautifulSoup
+
 from utils.config import settings
-from .kewords_classify import *
+from .kewords_classify import (
+    B2B_SIGNALS,
+    B2C_SIGNALS,
+    B2B_URL_SIGNALS,
+    B2C_URL_SIGNALS,
+    ECOMMERCE_TECH,
+    MEDIA_SIGNALS,
+    PROFESSIONAL_MEDIA_SIGNALS,
+    EDUCATION_SIGNALS,
+    GOVERNMENT_SIGNALS,
+    NONPROFIT_SIGNALS,
+    MEDIA_URL_SIGNALS,
+    EDUCATION_URL_SIGNALS,
+    GOVERNMENT_URL_SIGNALS,
+    NICHE_KEYWORDS,
+)
+
+
+SPECIAL_SIGNAL_GROUPS = {
+    "MEDIA": MEDIA_SIGNALS,
+    "PROFESSIONAL_MEDIA": PROFESSIONAL_MEDIA_SIGNALS,
+    "EDUCATION": EDUCATION_SIGNALS,
+    "GOVERNMENT": GOVERNMENT_SIGNALS,
+    "NONPROFIT": NONPROFIT_SIGNALS,
+}
 
 
 class WebsiteAnalyzer:
@@ -16,12 +42,38 @@ class WebsiteAnalyzer:
 
     @staticmethod
     def normalize_domain(domain: str) -> str:
-        domain = domain.strip().lower()
-        domain = re.sub(r"^https?://", "", domain)
-        domain = re.sub(r"^www\.", "", domain)
+        domain = str(domain or "").strip().lower()
+
+        domain = re.sub(
+            r"^https?://",
+            "",
+            domain,
+        )
+
+        domain = re.sub(
+            r"^www\.",
+            "",
+            domain,
+        )
+
+        domain = domain.split("/")[0]
+
         return domain.rstrip("/")
 
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        text = str(text or "").lower()
+
+        text = re.sub(
+            r"\s+",
+            " ",
+            text,
+        )
+
+        return text.strip()
+
     async def fetch(self, domain: str) -> tuple[str, str]:
+
         headers = {
             "User-Agent": self.user_agent,
             "Accept": "text/html,application/xhtml+xml",
@@ -36,6 +88,7 @@ class WebsiteAnalyzer:
         ) as client:
 
             for scheme in ("https", "http"):
+
                 try:
                     response = await client.get(f"{scheme}://{domain}")
 
@@ -63,12 +116,6 @@ class WebsiteAnalyzer:
 
         raise RuntimeError(f"Could not reach domain: {last_error}")
 
-    @staticmethod
-    def normalize_text(text: str) -> str:
-        text = text.lower()
-        text = re.sub(r"\s+", " ", text)
-        return text.strip()
-
     def extract_features(
         self,
         html: str,
@@ -80,15 +127,33 @@ class WebsiteAnalyzer:
             "html.parser",
         )
 
-        for tag in soup(["script", "style", "noscript", "svg"]):
+        for tag in soup(
+            [
+                "script",
+                "style",
+                "noscript",
+                "svg",
+                "iframe",
+            ]
+        ):
             tag.decompose()
 
-        text = self.normalize_text(soup.get_text(" ", strip=True)[:100_000])
+        text = self.normalize_text(
+            soup.get_text(
+                " ",
+                strip=True,
+            )[:100_000]
+        )
 
         title = ""
 
         if soup.title:
-            title = self.normalize_text(soup.title.get_text(" ", strip=True))
+            title = self.normalize_text(
+                soup.title.get_text(
+                    " ",
+                    strip=True,
+                )
+            )
 
         meta_description = ""
 
@@ -103,11 +168,26 @@ class WebsiteAnalyzer:
         )
 
         if meta:
-            meta_description = self.normalize_text(meta.get("content", ""))
+            meta_description = self.normalize_text(
+                meta.get(
+                    "content",
+                    "",
+                )
+            )
 
         headings = self.normalize_text(
             " ".join(
-                h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2", "h3"])
+                h.get_text(
+                    " ",
+                    strip=True,
+                )
+                for h in soup.find_all(
+                    [
+                        "h1",
+                        "h2",
+                        "h3",
+                    ]
+                )
             )
         )
 
@@ -117,18 +197,24 @@ class WebsiteAnalyzer:
             "a",
             href=True,
         ):
+            href = str(
+                link.get(
+                    "href",
+                    "",
+                )
+            ).lower()
+
+            anchor = self.normalize_text(
+                link.get_text(
+                    " ",
+                    strip=True,
+                )
+            )
+
             links.append(
                 {
-                    "href": link.get(
-                        "href",
-                        "",
-                    ).lower(),
-                    "anchor": self.normalize_text(
-                        link.get_text(
-                            " ",
-                            strip=True,
-                        )
-                    ),
+                    "href": href,
+                    "anchor": anchor,
                 }
             )
 
@@ -138,8 +224,10 @@ class WebsiteAnalyzer:
             "script",
             type="application/ld+json",
         ):
+
             try:
-                data = json.loads(script.string or "")
+                raw = script.string or ""
+                data = json.loads(raw)
 
                 items = data if isinstance(data, list) else [data]
 
@@ -150,7 +238,10 @@ class WebsiteAnalyzer:
 
                     item_type = item.get("@type")
 
-                    if isinstance(item_type, list):
+                    if isinstance(
+                        item_type,
+                        list,
+                    ):
                         structured_types.extend(str(x).lower() for x in item_type)
 
                     elif item_type:
@@ -159,9 +250,14 @@ class WebsiteAnalyzer:
             except Exception:
                 continue
 
-        paths = [
-            link["href"].split("?")[0] for link in links if link["href"].startswith("/")
-        ]
+        paths = []
+
+        for link in links:
+
+            href = link["href"]
+
+            if href.startswith("/"):
+                paths.append(href.split("?")[0].lower())
 
         return {
             "text": text,
@@ -175,32 +271,37 @@ class WebsiteAnalyzer:
             "final_url": final_url,
         }
 
-    @staticmethod
+    @classmethod
     def searchable_text(
+        cls,
         features: dict[str, Any],
     ) -> str:
 
-        return WebsiteAnalyzer.normalize_text(
+        return cls.normalize_text(
             " ".join(
                 [
-                    features["text"],
-                    features["title"],
-                    features["meta_description"],
-                    features["headings"],
+                    features.get("text", ""),
+                    features.get("title", ""),
+                    features.get("meta_description", ""),
+                    features.get("headings", ""),
                 ]
             )
         )
 
-    @staticmethod
+    @classmethod
     def score_signal_group(
+        cls,
         text: str,
         signals: dict[str, int],
-    ) -> tuple[float, list]:
+        prefix: str = "",
+    ) -> tuple[float, list[dict[str, Any]]]:
 
         score = 0
         matches = []
 
         for keyword, weight in signals.items():
+
+            keyword = cls.normalize_text(keyword)
 
             count = text.count(keyword)
 
@@ -218,7 +319,7 @@ class WebsiteAnalyzer:
 
             matches.append(
                 {
-                    "signal": keyword,
+                    "signal": f"{prefix}{keyword}",
                     "count": count,
                     "weight": weight,
                     "score": signal_score,
@@ -227,20 +328,28 @@ class WebsiteAnalyzer:
 
         return score, matches
 
+    @staticmethod
     def score_url_signals(
-        self,
         paths: list[str],
         signals: dict[str, int],
-    ) -> tuple[float, list]:
+    ) -> tuple[float, list[dict[str, Any]]]:
 
         score = 0
         matches = []
 
         for path in paths:
 
+            path = path.lower()
+
             for signal, weight in signals.items():
 
-                if path.startswith(signal):
+                signal = signal.lower()
+
+                if (
+                    path == signal
+                    or path.startswith(signal + "/")
+                    or path.startswith(signal + "?")
+                ):
 
                     score += weight
 
@@ -255,7 +364,10 @@ class WebsiteAnalyzer:
 
         return score, matches
 
-    def score(self, features: dict[str, Any]) -> dict[str, Any]:
+    def score(
+        self,
+        features: dict[str, Any],
+    ) -> dict[str, Any]:
 
         text = self.searchable_text(features)
 
@@ -304,26 +416,26 @@ class WebsiteAnalyzer:
             B2C_URL_SIGNALS,
         )
 
+        media_url_score, media_url_signals = self.score_url_signals(
+            features["paths"],
+            MEDIA_URL_SIGNALS,
+        )
+
+        education_url_score, education_url_signals = self.score_url_signals(
+            features["paths"],
+            EDUCATION_URL_SIGNALS,
+        )
+
+        government_url_score, government_url_signals = self.score_url_signals(
+            features["paths"],
+            GOVERNMENT_URL_SIGNALS,
+        )
+
         b2b_score += b2b_url_score
         b2c_score += b2c_url_score
-
-        ecommerce_detected = None
-
-        for tech, weight in ECOMMERCE_TECH.items():
-
-            if tech in features["source"]:
-
-                ecommerce_detected = tech
-                b2c_score += weight
-
-                b2c_signals.append(
-                    {
-                        "signal": f"technology:{tech}",
-                        "count": 1,
-                        "weight": weight,
-                        "score": weight,
-                    }
-                )
+        media_score += media_url_score
+        education_score += education_url_score
+        government_score += government_url_score
 
         structured_types = set(features["structured_types"])
 
@@ -353,6 +465,25 @@ class WebsiteAnalyzer:
                 }
             )
 
+        ecommerce_detected = None
+
+        for tech, weight in ECOMMERCE_TECH.items():
+
+            if tech.lower() in features["source"]:
+
+                ecommerce_detected = tech
+
+                b2c_score += weight
+
+                b2c_signals.append(
+                    {
+                        "signal": f"technology:{tech}",
+                        "count": 1,
+                        "weight": weight,
+                        "score": weight,
+                    }
+                )
+
         return {
             "b2b_score": b2b_score,
             "b2c_score": b2c_score,
@@ -363,10 +494,10 @@ class WebsiteAnalyzer:
             "nonprofit_score": nonprofit_score,
             "b2b_signals": b2b_signals + b2b_url_signals,
             "b2c_signals": b2c_signals + b2c_url_signals,
-            "media_signals": media_signals,
+            "media_signals": media_signals + media_url_signals,
             "professional_media_signals": professional_media_signals,
-            "education_signals": education_signals,
-            "government_signals": government_signals,
+            "education_signals": education_signals + education_url_signals,
+            "government_signals": government_signals + government_url_signals,
             "nonprofit_signals": nonprofit_signals,
             "ecommerce_detected": ecommerce_detected,
         }
@@ -376,30 +507,74 @@ class WebsiteAnalyzer:
         scores: dict[str, Any],
     ) -> tuple[str, float, str]:
 
-        b2b = scores["b2b_score"]
-        b2c = scores["b2c_score"]
+        b2b = float(
+            scores.get(
+                "b2b_score",
+                0,
+            )
+        )
+
+        b2c = float(
+            scores.get(
+                "b2c_score",
+                0,
+            )
+        )
+
+        media = float(
+            scores.get(
+                "media_score",
+                0,
+            )
+        )
+
+        professional_media = float(
+            scores.get(
+                "professional_media_score",
+                0,
+            )
+        )
+
+        education = float(
+            scores.get(
+                "education_score",
+                0,
+            )
+        )
+
+        government = float(
+            scores.get(
+                "government_score",
+                0,
+            )
+        )
+
+        nonprofit = float(
+            scores.get(
+                "nonprofit_score",
+                0,
+            )
+        )
 
         business_total = b2b + b2c
 
         special_scores = {
-            "MEDIA": scores["media_score"],
-            "EDUCATION": scores["education_score"],
-            "GOVERNMENT": scores["government_score"],
-            "NONPROFIT": scores["nonprofit_score"],
+            "MEDIA": media,
+            "EDUCATION": education,
+            "GOVERNMENT": government,
+            "NONPROFIT": nonprofit,
         }
 
         special_type, special_score = max(
             special_scores.items(),
-            key=lambda x: x[1],
+            key=lambda item: item[1],
         )
-
-        professional_media = scores["professional_media_score"]
 
         if professional_media >= 30:
 
             confidence = min(
                 0.99,
-                professional_media / 100,
+                0.60 + professional_media / 150,
             )
 
             return (
@@ -408,11 +583,11 @@ class WebsiteAnalyzer:
                 "PROFESSIONAL_MEDIA",
             )
 
-        if special_type == "MEDIA" and media_is_strong(scores):
+        if special_type == "MEDIA" and media >= 40 and media > professional_media:
 
             confidence = min(
                 0.99,
-                special_score / 100,
+                0.60 + media / 180,
             )
 
             return (
@@ -421,11 +596,11 @@ class WebsiteAnalyzer:
                 "MEDIA",
             )
 
-        if special_type == "EDUCATION" and special_score >= 40:
+        if special_type == "EDUCATION" and education >= 40:
 
             confidence = min(
                 0.99,
-                special_score / 100,
+                0.60 + education / 180,
             )
 
             return (
@@ -434,11 +609,11 @@ class WebsiteAnalyzer:
                 "EDUCATION",
             )
 
-        if special_type == "GOVERNMENT" and special_score >= 40:
+        if special_type == "GOVERNMENT" and government >= 40:
 
             confidence = min(
                 0.99,
-                special_score / 100,
+                0.60 + government / 180,
             )
 
             return (
@@ -447,11 +622,11 @@ class WebsiteAnalyzer:
                 "GOVERNMENT",
             )
 
-        if special_type == "NONPROFIT" and special_score >= 40:
+        if special_type == "NONPROFIT" and nonprofit >= 40:
 
             confidence = min(
                 0.99,
-                special_score / 100,
+                0.60 + nonprofit / 180,
             )
 
             return (
@@ -460,21 +635,31 @@ class WebsiteAnalyzer:
                 "NONPROFIT",
             )
 
-        if business_total == 0:
+        if business_total <= 0:
 
             return (
                 "UNKNOWN",
                 0.0,
-                "UNKNOWN",
+                "LOW_EVIDENCE",
             )
 
         difference = abs(b2b - b2c)
 
-        if b2b >= 30 and b2c >= 30 and difference <= business_total * 0.35:
+        dominant_score = max(
+            b2b,
+            b2c,
+        )
+
+        dominance = difference / business_total
+
+        relative_confidence = dominant_score / business_total
+
+        # Strong evidence on both sides
+        if b2b >= 35 and b2c >= 35 and dominance <= 0.30:
 
             confidence = min(
                 0.99,
-                business_total / 150,
+                0.65 + business_total / 300,
             )
 
             return (
@@ -483,47 +668,90 @@ class WebsiteAnalyzer:
                 "BUSINESS",
             )
 
-        if difference < 10:
+        # Very low evidence
+        if business_total < 15:
 
             return (
                 "UNKNOWN",
                 round(
-                    difference
-                    / max(
-                        business_total,
-                        1,
+                    min(
+                        0.49,
+                        business_total / 30,
                     ),
                     2,
                 ),
-                "BUSINESS",
+                "LOW_EVIDENCE",
             )
 
+        # Balanced but enough evidence
+        # Instead of immediately UNKNOWN when difference < 10
+        if dominance < 0.12:
+
+            if b2b >= 20 and b2c >= 20:
+
+                return (
+                    "BOTH",
+                    round(
+                        min(
+                            0.85,
+                            0.55 + business_total / 250,
+                        ),
+                        2,
+                    ),
+                    "BALANCED_BUSINESS",
+                )
+
+            return (
+                "UNKNOWN",
+                round(
+                    max(
+                        0.35,
+                        relative_confidence,
+                    ),
+                    2,
+                ),
+                "AMBIGUOUS",
+            )
+
+        # B2B
         if b2b > b2c:
+
+            confidence = min(
+                0.99,
+                0.50 + dominance * 0.60 + min(b2b / 300, 0.20),
+            )
 
             return (
                 "B2B",
                 round(
-                    b2b / business_total,
+                    confidence,
                     2,
                 ),
                 "BUSINESS",
             )
 
+        # B2C
+        confidence = min(
+            0.99,
+            0.50 + dominance * 0.60 + min(b2c / 300, 0.20),
+        )
+
         return (
             "B2C",
             round(
-                b2c / business_total,
+                confidence,
                 2,
             ),
             "BUSINESS",
         )
 
-    @staticmethod
+    @classmethod
     def guess_niche(
+        cls,
         features: dict[str, Any],
     ) -> dict[str, Any]:
 
-        text = WebsiteAnalyzer.searchable_text(features)
+        text = cls.searchable_text(features)
 
         scores = {}
 
@@ -534,7 +762,7 @@ class WebsiteAnalyzer:
 
             for keyword in keywords:
 
-                count = text.count(keyword)
+                count = text.count(cls.normalize_text(keyword))
 
                 if count:
 
@@ -560,23 +788,28 @@ class WebsiteAnalyzer:
                 "signals": [],
             }
 
-        best_niche = max(
-            scores,
-            key=lambda x: scores[x]["score"],
+        ranked = sorted(
+            scores.items(),
+            key=lambda item: item[1]["score"],
+            reverse=True,
         )
 
-        best_score = scores[best_niche]["score"]
+        best_niche, best_data = ranked[0]
+
+        best_score = best_data["score"]
+
+        confidence = min(
+            best_score / 10,
+            1.0,
+        )
 
         return {
             "name": best_niche,
             "confidence": round(
-                min(
-                    best_score / 10,
-                    1.0,
-                ),
+                confidence,
                 2,
             ),
-            "signals": scores[best_niche]["signals"],
+            "signals": best_data["signals"],
         }
 
     async def analyze(
@@ -586,70 +819,78 @@ class WebsiteAnalyzer:
 
         domain = self.normalize_domain(domain)
 
-        html, final_url = await self.fetch(domain)
-
-        features = self.extract_features(
-            html,
-            final_url,
-        )
-
-        scores = self.score(features)
-
-        classification, confidence, category = self.classify(scores)
-
-        niche = self.guess_niche(features)
-
-        return {
+        result = {
             "domain": domain,
-            "b2b_b2c": classification,
-            "confidence": confidence,
-            "category": category,
-            "niche": niche,
-            "confidence_signals": {
-                "b2b_score": scores["b2b_score"],
-                "b2c_score": scores["b2c_score"],
-                "media_score": scores["media_score"],
-                "professional_media_score": scores["professional_media_score"],
-                "education_score": scores["education_score"],
-                "government_score": scores["government_score"],
-                "nonprofit_score": scores["nonprofit_score"],
-                "top_b2b_signals": sorted(
-                    scores["b2b_signals"],
-                    key=lambda x: x["score"],
-                    reverse=True,
-                )[:10],
-                "top_b2c_signals": sorted(
-                    scores["b2c_signals"],
-                    key=lambda x: x["score"],
-                    reverse=True,
-                )[:10],
-                "top_media_signals": sorted(
-                    scores["media_signals"],
-                    key=lambda x: x["score"],
-                    reverse=True,
-                )[:10],
-                "top_professional_media_signals": sorted(
-                    scores["professional_media_signals"],
-                    key=lambda x: x["score"],
-                    reverse=True,
-                )[:10],
-                "ecommerce": bool(scores["ecommerce_detected"]),
-                "ecommerce_platform": scores["ecommerce_detected"],
-                "structured_data": features["structured_types"],
-                "final_url": features["final_url"],
-            },
+            "b2b_b2c": "UNKNOWN",
+            "confidence": 0.0,
+            "category": "UNKNOWN",
+            "niche": None,
+            "confidence_signals": {},
             "error": None,
         }
 
+        try:
 
-def media_is_strong(
-    scores: dict[str, Any],
-) -> bool:
+            html, final_url = await self.fetch(domain)
 
-    media_score = scores["media_score"]
-    professional_score = scores["professional_media_score"]
+            features = self.extract_features(
+                html,
+                final_url,
+            )
 
-    return media_score >= 40 and media_score > professional_score
+            scores = self.score(features)
+
+            classification, confidence, category = self.classify(scores)
+
+            niche = self.guess_niche(features)
+
+            result.update(
+                {
+                    "b2b_b2c": classification,
+                    "confidence": confidence,
+                    "category": category,
+                    "niche": niche,
+                    "confidence_signals": {
+                        "b2b_score": scores["b2b_score"],
+                        "b2c_score": scores["b2c_score"],
+                        "media_score": scores["media_score"],
+                        "professional_media_score": scores["professional_media_score"],
+                        "education_score": scores["education_score"],
+                        "government_score": scores["government_score"],
+                        "nonprofit_score": scores["nonprofit_score"],
+                        "top_b2b_signals": sorted(
+                            scores["b2b_signals"],
+                            key=lambda x: x["score"],
+                            reverse=True,
+                        )[:10],
+                        "top_b2c_signals": sorted(
+                            scores["b2c_signals"],
+                            key=lambda x: x["score"],
+                            reverse=True,
+                        )[:10],
+                        "top_media_signals": sorted(
+                            scores["media_signals"],
+                            key=lambda x: x["score"],
+                            reverse=True,
+                        )[:10],
+                        "top_professional_media_signals": sorted(
+                            scores["professional_media_signals"],
+                            key=lambda x: x["score"],
+                            reverse=True,
+                        )[:10],
+                        "ecommerce": bool(scores["ecommerce_detected"]),
+                        "ecommerce_platform": scores["ecommerce_detected"],
+                        "structured_data": features["structured_types"],
+                        "final_url": features["final_url"],
+                    },
+                }
+            )
+
+        except Exception as exc:
+
+            result["error"] = str(exc)
+
+        return result
 
 
 analyzer = WebsiteAnalyzer()
