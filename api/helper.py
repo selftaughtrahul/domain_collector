@@ -1274,4 +1274,4 @@ class WebsiteAnalyzer:
 # SINGLETON
 # ================================================================
 
-analyzer = WebsiteAnalyzer()
+# analyzer = WebsiteAnalyzer()

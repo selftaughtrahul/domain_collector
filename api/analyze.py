@@ -5,7 +5,7 @@ from collectors.intelligence import (
 )
 import httpx
 from utils.config import settings
-from .helper import analyzer
+from .website_analyzer import analyzer
 
 router = APIRouter(tags=["Analyze Domains"])
 

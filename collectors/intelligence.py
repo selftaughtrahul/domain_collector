@@ -13,7 +13,7 @@ from tldextract import extract as tld_extract
 import httpx
 from bs4 import BeautifulSoup
 from utils.config import settings
-from api.helper import analyzer
+from api.website_analyzer import analyzer
 
 # ──────────────────────────────────────────────────────────
 # helpers
